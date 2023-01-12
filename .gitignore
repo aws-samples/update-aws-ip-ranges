@@ -1,0 +1,10 @@
+*.DS_Store
+__pycache__/
+*.zip
+.vscode
+internal/*
+*.bak
+_*.*
+*.zip
+lambda_return.json
+ip-ranges.json

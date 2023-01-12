@@ -1,0 +1,211 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Creates Lambda function and subscribe it to ip-ranges.json SNS topic.
+  Lambda function will create or update AWS resources according to the configuration on services.json file inside it.
+
+Resources:
+  LambdaUpdateIPRanges:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:Code log errors on CloudWatch logs
+    # checkov:skip=CKV_AWS_117:Not required to run inside a VPC
+    # checkov:skip=CKV_AWS_173:Variable is not sensitive
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: "Permission is defined with much restriction as possible"
+          - id: W89
+            reason: "Not required to run inside a VPC"
+    Properties: 
+      Description: This Lambda function, invoked by an incoming SNS message, updates the IPv4 and IPv6 ranges with the addresses from the specified services'
+      Architectures:
+        - 'arm64'
+      Environment: 
+        Variables:
+          LOG_LEVEL: 'INFO'
+      Handler: 'update_aws_ip_ranges.lambda_handler'
+      MemorySize: 256
+      Role: !GetAtt 'LambdaUpdateIPRangesIamRole.Arn'
+      Runtime: python3.9
+      Timeout: 300
+      ReservedConcurrentExecutions: 2
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              print(event)
+
+  LambdaUpdateIPRangesIamRole:
+    Type: AWS::IAM::Role
+    # checkov:skip=CKV_AWS_111:CloudWatch Logs doesn't support condition
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Policy has conditions when it is allowed"
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement: 
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Description: IP Ranges auto update Lambda
+      Policies:
+        - PolicyName: 'CloudWatchLogsPermissions'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*LambdaUpdateIPRanges*:*'
+
+
+        - PolicyName: 'WAFPermissions'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'wafv2:ListIPSets'
+                Resource: '*'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'wafv2:CreateIPSet'
+                  - 'wafv2:TagResource'
+                Resource: '*'
+                Condition:
+                  StringLike:
+                    'aws:RequestTag/Name':
+                      - 'aws-ip-ranges-*-ipv4'
+                      - 'aws-ip-ranges-*-ipv6'
+                  StringEquals:
+                    'aws:RequestTag/ManagedBy': 'update-aws-ip-ranges'
+                    'aws:RequestTag/UpdatedAt': 'Not yet'
+                  'ForAllValues:StringEquals':
+                    'aws:TagKeys':
+                      - 'Name'
+                      - 'ManagedBy'
+                      - 'CreatedAt'
+                      - 'UpdatedAt'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'wafv2:TagResource'
+                Resource:
+                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
+                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                Condition:
+                  StringLike:
+                    'aws:ResourceTag/Name':
+                      - 'aws-ip-ranges-*-ipv4'
+                      - 'aws-ip-ranges-*-ipv6'
+                  StringEquals:
+                    'aws:ResourceTag/ManagedBy': 'update-aws-ip-ranges'
+                  'ForAllValues:StringEquals':
+                    'aws:TagKeys':
+                      - 'UpdatedAt'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'wafv2:ListTagsForResource'
+                  - 'wafv2:GetIPSet'
+                  - 'wafv2:UpdateIPSet'
+                Resource:
+                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
+                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                Condition:
+                  StringLike:
+                    'aws:ResourceTag/Name':
+                      - 'aws-ip-ranges-*-ipv4'
+                      - 'aws-ip-ranges-*-ipv6'
+                  StringEquals:
+                    'aws:ResourceTag/ManagedBy': 'update-aws-ip-ranges'
+
+
+        - PolicyName: 'EC2Permissions'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:DescribeTags'
+                  - 'ec2:DescribeManagedPrefixLists'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'ec2:Region': !Ref AWS::Region
+
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:GetManagedPrefixListEntries'
+                  - 'ec2:ModifyManagedPrefixList'
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Condition:
+                  StringEquals:
+                    'ec2:Region': !Ref AWS::Region
+
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:CreateManagedPrefixList'
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Condition:
+                  StringEquals:
+                    'ec2:Region': !Ref AWS::Region
+                    'aws:RequestTag/ManagedBy': 'update-aws-ip-ranges'
+                    'aws:RequestTag/UpdatedAt': 'Not yet'
+                  StringLike:
+                    'aws:RequestTag/Name':
+                      - 'aws-ip-ranges-*-ipv4'
+                      - 'aws-ip-ranges-*-ipv6'
+                  'ForAllValues:StringEquals':
+                    'aws:TagKeys':
+                      - 'Name'
+                      - 'ManagedBy'
+                      - 'CreatedAt'
+                      - 'UpdatedAt'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:CreateTags'
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Condition:
+                  StringEquals:
+                    'ec2:Region': !Ref AWS::Region
+                    'ec2:CreateAction' : 'CreateManagedPrefixList'
+
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:CreateTags'
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Condition:
+                  StringEquals:
+                    'ec2:Region': !Ref AWS::Region
+
+  LambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties: 
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref LambdaUpdateIPRanges
+      Principal: 'sns.amazonaws.com'
+      SourceArn: 'arn:aws:sns:us-east-1:806199016981:AmazonIpSpaceChanged'
+      SourceAccount: '806199016981'
+
+  LambdaSNSSubscription:
+    Type: 'AWS::SNS::Subscription'
+    Properties: 
+      Endpoint: !GetAtt 'LambdaUpdateIPRanges.Arn'
+      Protocol: 'lambda'
+      Region: 'us-east-1'
+      TopicArn: 'arn:aws:sns:us-east-1:806199016981:AmazonIpSpaceChanged'

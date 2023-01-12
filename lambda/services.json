@@ -1,0 +1,56 @@
+{
+    "Services": [
+        {
+            "Name": "API_GATEWAY",
+            "Regions": ["sa-east-1"],
+            "PrefixList": {
+                "Enable": true,
+                "Summarize": false
+            },
+            "WafIPSet": {
+                "Enable": true,
+                "Summarize": false,
+                "Scopes": ["REGIONAL"]
+            }
+        },
+        {
+            "Name": "CLOUDFRONT_ORIGIN_FACING",
+            "Regions": [],
+            "PrefixList": {
+                "Enable": false,
+                "Summarize": false
+            },
+            "WafIPSet": {
+                "Enable": true,
+                "Summarize": false,
+                "Scopes": ["REGIONAL"]
+            }
+        },
+        {
+            "Name": "EC2_INSTANCE_CONNECT",
+            "Regions": ["sa-east-1"],
+            "PrefixList": {
+                "Enable": true,
+                "Summarize": false
+            },
+            "WafIPSet": {
+                "Enable": true,
+                "Summarize": false,
+                "Scopes": ["REGIONAL"]
+            }
+        },
+        {
+            "Name": "ROUTE53_HEALTHCHECKS",
+            "Regions": [],
+            "PrefixList": {
+                "Enable": true,
+                "Summarize": true
+            },
+            "WafIPSet": {
+                "Enable": true,
+                "Summarize": true,
+                "Scopes": ["REGIONAL"]
+            }
+        }
+    ]
+}
