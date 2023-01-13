@@ -4,20 +4,53 @@ SPDX-License-Identifier: MIT-0
 '''
 
 import hashlib
+import ipaddress
 import json
 import logging
 import os
 import time
-import ipaddress
-from urllib import request
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Union
-from dataclasses import dataclass, field, asdict
+from urllib import request
 
-import boto3 # type: ignore
+import boto3  # type: ignore
 
 ####
 
+DESCRIPTION = 'Managed by update IP ranges Lambda'
+RESOURCE_NAME_PREFIX = 'aws-ip-ranges'
+MANAGED_BY = 'update-aws-ip-ranges'
+
+####### Get values from environment variables  ######
+
+## Logging level options in less verbosity order. INFO is the default.
+## If you enable DEBUG, it will log boto3 calls as well.
+# CRITICAL
+# ERROR
+# WARNING
+# INFO
+# DEBUG
+
+# Get logging level from environment variable
+LOG_LEVEL = os.getenv('LOG_LEVEL', '').upper()
+if LOG_LEVEL not in ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG']:
+    LOG_LEVEL = 'INFO'
+
+# Set up logging. Set the level if the handler is already configured.
+if len(logging.getLogger().handlers) > 0:
+    logging.getLogger().setLevel(LOG_LEVEL)
+else:
+    logging.basicConfig(level=LOG_LEVEL)
+
+# Define client for services
+waf_client = boto3.client('wafv2')
+ec2_client = boto3.client('ec2')
+
+
+#======================================================================================================================
+# Data classes and help functions
+#======================================================================================================================
 @dataclass
 class IPv4List():
     """List of IPv4 Networks"""
@@ -88,180 +121,6 @@ class ServiceIPRange():
         """Return a dictionary from this object"""
         return {'ipv4': self.ipv4, 'ipv6': self.ipv6}
 
-
-DESCRIPTION = 'Managed by auto update IP ranges Lambda'
-
-####### Get values from environment variables  ######
-
-## Logging level options in less verbosity order. INFO is the default.
-## If you enable DEBUG, it will log boto3 calls as well.
-# CRITICAL
-# ERROR
-# WARNING
-# INFO
-# DEBUG
-
-# Get logging level from environment variable
-LOG_LEVEL = os.getenv('LOG_LEVEL', '').upper()
-if LOG_LEVEL not in ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG']:
-    LOG_LEVEL = 'INFO'
-
-# Set up logging. Set the level if the handler is already configured.
-if len(logging.getLogger().handlers) > 0:
-    logging.getLogger().setLevel(LOG_LEVEL)
-else:
-    logging.basicConfig(level=LOG_LEVEL)
-
-# Define client for services
-waf_client = boto3.client('wafv2')
-ec2_client = boto3.client('ec2')
-
-
-#### Main Lambda function
-def lambda_handler(event, context):
-    """Lambda function handler"""
-    logging.info('lambda_handler start')
-    logging.debug(f'Parameter event: {event}')
-    logging.debug(f'Parameter context: {context}')
-    try:
-        # Read config file to get services and regions
-        with open('services.json', 'r', encoding='utf-8') as services_file:
-            logging.info('Reading file "services.json"')
-            config_services: Dict[str, Any] = json.loads(services_file.read())
-            logging.info(f'Found services: {config_services}')
-
-        # If you want different services, set the SERVICES environment variable
-        # It defaults to ROUTE53_HEALTHCHECKS, API_GATEWAY and EC2_INSTANCE_CONNECT.
-        # Using 'jq' and 'curl' get the list of possible services like this:
-        # curl -s 'https://ip-ranges.amazonaws.com/ip-ranges.json' | jq -r '.prefixes[] | .service' ip-ranges.json | sort -u
-
-        message: Dict[str, Any] = json.loads(event['Records'][0]['Sns']['Message'])
-        logging.debug(f'Message from SNS topic: {message}')
-
-        # Load the ip ranges from the url
-        logging.debug(f'URL: {message["url"]}')
-        logging.debug(f'MD5: {message["md5"]}')
-        ip_ranges: Dict[str, Any] = json.loads(get_ip_groups_json(message['url'], message['md5']))
-        logging.info('Got "ip-ranges.json" file')
-        logging.info(f'SyncToken: {ip_ranges["syncToken"]}')
-        logging.info(f'CreateDate: {ip_ranges["createDate"]}')
-        logging.debug(f'File content: {ip_ranges}')
-
-        # Extract the service ranges
-        # Each service name from config file will be a key on returned dictionary
-        # service_ranges => Dict(string, Dict(string, List))
-        # keys 'ipv4' and 'ipv6' will ALWAYS be a valid list.
-        # If no IP range is found, it will be an empty list
-        # Example:
-        # {
-        #     'CLOUDFRONT': {
-        #         'ipv4': [
-        #             '1.1.1.1/32',
-        #             '2.2.2.2/32'
-        #         ],
-        #         'ipv6': [
-        #             'aaaa::1/56'
-        #         ]
-        #     },
-        #     'API_GATEWAY': {
-        #         'ipv4': [
-        #             '3.3.3.3/32'
-        #         ],
-        #         'ipv6': []
-        #     }
-        # }
-        service_ranges: Dict[str, ServiceIPRange] = get_ranges_for_service(ip_ranges, config_services)
-        logging.info(f'Service IP ranges keys: {service_ranges.keys()}')
-        logging.debug(f'Dictionary with service IP ranges: {service_ranges}')
-
-        # Dictonary to return from this function
-        resource_names: Dict[str, Dict[str, list[str]]] = {
-            'PrefixList': {'created': [], 'updated':[]},
-            'WafIPSet': {'created': [], 'updated':[]}
-        }
-        service_name: str = ''
-        should_summarize: bool = False
-
-        # Create or Update the appropriate resource for each service range found
-        ### Prefix List
-        logging.info('Handling VPC Prefix List')
-        vpc_prefix_lists: Dict[str, Dict] = {}
-        for config_service in config_services['Services']:
-            service_name = config_service['Name']
-
-            logging.info(f'Start handle VPC Prefix List for "{service_name}"')
-            if service_name not in service_ranges:
-                logging.warning(f'Service name "{service_name}" not found in service ranges variable. This condition should NEVER happens. Possible bug in the code. Please investigate.')
-            else:
-                # Handle Prefix List
-                if 'PrefixList' not in config_service:
-                    logging.info(f'Service "{service_name}" not configured with "PrefixList"')
-                else:
-                    if not config_service['PrefixList']['Enable']:
-                        logging.info(f'Service "{service_name}" is configured with "PrefixList" but it is not enable')
-                    else:
-                        try:
-                            # Will list VPC Prefix Lists only once
-                            if not vpc_prefix_lists:
-                                logging.info('Will get the list of VPC Prefix List for the first time')
-                                vpc_prefix_lists = list_prefix_lists(ec2_client)
-
-                            should_summarize = config_service['PrefixList']['Summarize']
-                            prefix_list_names: Dict[str, list[str]] = manage_prefix_list(ec2_client, vpc_prefix_lists, service_name, service_ranges, should_summarize)
-                            resource_names['PrefixList']['created'] += prefix_list_names['created']
-                            resource_names['PrefixList']['updated'] += prefix_list_names['updated']
-                        except Exception as error:
-                            logging.error("Error handling VPC Prefix List. It will not block the execution. It will continue to other services and resources.")
-                            logging.exception(error)
-            logging.info(f'Finish handle VPC Prefix List for "{service_name}"')
-
-        # Create or Update the appropriate resource for each service range found
-        ### WAF IPSet
-        logging.info('Handling WAF IPSet')
-        waf_ipsets_by_scope: Dict[str, Dict] = {}
-        for config_service in config_services['Services']:
-            service_name = config_service['Name']
-
-            logging.info(f'Start handle WAF IPSet for "{service_name}"')
-            if service_name not in service_ranges:
-                logging.warning(f'Service name "{service_name}" not found in service ranges variable. This condition should NEVER happens. Possible bug in the code. Please investigate.')
-            else:
-                # Handle WAF IPSet
-                if 'WafIPSet' not in config_service:
-                    logging.info(f'Service "{service_name}" not configured with "WafIPSet"')
-                else:
-                    if not config_service['WafIPSet']['Enable']:
-                        logging.info(f'Service "{service_name}" is configured with "WafIPSet" but it is not enable')
-                    else:
-                        # Scope can be 'CLOUDFRONT' or 'REGIONAL'
-                        for ipset_scope in config_service['WafIPSet']['Scopes']:
-                            logging.info(f'Service "{service_name}" WAF Scope "{ipset_scope}"')
-                            try:
-                                waf_ipsets: Dict[str, Dict] = {}
-                                # Will list WAF IPSets only once for each scope
-                                if ipset_scope in waf_ipsets_by_scope:
-                                    waf_ipsets = waf_ipsets_by_scope[ipset_scope]
-                                else:
-                                    logging.info(f'Will get the list of WAF IPSets for the first time for scope "{ipset_scope}"')
-                                    waf_ipsets = list_waf_ipset(waf_client, ipset_scope)
-                                    waf_ipsets_by_scope[ipset_scope] = waf_ipsets
-
-                                should_summarize = config_service['WafIPSet']['Summarize']
-                                ipset_names: Dict[str, list[str]] = manage_waf_ipset(waf_client, waf_ipsets, service_name, ipset_scope, service_ranges, should_summarize)
-                                resource_names['WafIPSet']['created'] += ipset_names['created']
-                                resource_names['WafIPSet']['updated'] += ipset_names['updated']
-                            except Exception as error:
-                                logging.error("Error handling WAF IPSet. It will not block the execution. It will continue to other services and resources.")
-                                logging.exception(error)
-            logging.info(f'Finish handle WAF IPSet for "{service_name}"')
-
-    except Exception as error:
-        logging.exception(error)
-        raise error
-
-    logging.debug(f'Function return: {resource_names}')
-    logging.info('lambda_handler end')
-    return resource_names
 
 ### General functions
 def get_ip_groups_json(url: str, expected_hash: str) -> str:
@@ -362,6 +221,7 @@ def get_ranges_for_service(ranges: Dict, config_services: Dict) -> Dict[str, Ser
     logging.info('get_ranges_for_service end')
     return service_ranges
 
+
 ### WAF IPSet functions
 def manage_waf_ipset(client: Any, waf_ipsets: Dict[str, Dict], service_name: str, ipset_scope: str, service_ranges: Dict[str, ServiceIPRange], should_summarize: bool) -> Dict[str, list[str]]:
     """Create or Update WAF IPSet"""
@@ -387,7 +247,7 @@ def manage_waf_ipset(client: Any, waf_ipsets: Dict[str, Dict], service_name: str
                 address_list = service_ranges[service_name].asdict()[ip_version].summarized()
 
             # Check if it is to create or update WAF IPSet
-            ipset_name: str = f"aws-ip-ranges-{service_name.lower().replace('_', '-')}-{ip_version}"
+            ipset_name: str = f"{RESOURCE_NAME_PREFIX}-{service_name.lower().replace('_', '-')}-{ip_version}"
             if ipset_name in waf_ipsets:
                 # IPSets exists, so will update it
                 logging.debug(f'WAF IPSet "{ipset_name}" found. Will update it.')
@@ -427,7 +287,7 @@ def create_waf_ipset(client: Any, ipset_name: str, ipset_scope: str, ipset_versi
             },
             {
                 'Key': 'ManagedBy',
-                'Value': 'update-aws-ip-ranges'
+                'Value': MANAGED_BY
             },
             {
                 'Key': 'CreatedAt',
@@ -526,7 +386,7 @@ def manage_prefix_list(client: Any, vpc_prefix_lists: Dict[str, Dict], service_n
             if should_summarize and (len(address_list) > 1):
                 address_list = service_ranges[service_name].asdict()[ip_version].summarized()
 
-            prefix_list_name: str = f"aws-ip-ranges-{service_name.lower().replace('_', '-')}-{ip_version}"
+            prefix_list_name: str = f"{RESOURCE_NAME_PREFIX}-{service_name.lower().replace('_', '-')}-{ip_version}"
             if prefix_list_name in vpc_prefix_lists:
                 # Prefix List exists, so will update it
                 logging.debug(f'VPC Prefix List "{prefix_list_name}" found. Will update it.')
@@ -610,7 +470,7 @@ def create_prefix_list(client: Any, prefix_list_name: str, prefix_list_ip_versio
                     },
                     {
                         'Key': 'ManagedBy',
-                        'Value': 'update-aws-ip-ranges'
+                        'Value': MANAGED_BY
                     },
                     {
                         'Key': 'CreatedAt',
@@ -758,6 +618,157 @@ def get_prefix_list_entries(client: Any, prefix_list_name: str, prefix_list_id: 
     logging.debug(f'Function return: {entries}')
     logging.info('get_prefix_list_entries end')
     return entries
+
+
+
+#======================================================================================================================
+# Lambda entry point
+#======================================================================================================================
+
+def lambda_handler(event, context):
+    """Lambda function handler"""
+    logging.info('lambda_handler start')
+    logging.debug(f'Parameter event: {event}')
+    logging.debug(f'Parameter context: {context}')
+    try:
+        # Read config file to get services and regions
+        with open('services.json', 'r', encoding='utf-8') as services_file:
+            logging.info('Reading file "services.json"')
+            config_services: Dict[str, Any] = json.loads(services_file.read())
+            logging.info(f'Found services: {config_services}')
+
+        # If you want different services, set the SERVICES environment variable
+        # It defaults to ROUTE53_HEALTHCHECKS, API_GATEWAY and EC2_INSTANCE_CONNECT.
+        # Using 'jq' and 'curl' get the list of possible services like this:
+        # curl -s 'https://ip-ranges.amazonaws.com/ip-ranges.json' | jq -r '.prefixes[] | .service' ip-ranges.json | sort -u
+
+        message: Dict[str, Any] = json.loads(event['Records'][0]['Sns']['Message'])
+        logging.debug(f'Message from SNS topic: {message}')
+
+        # Load the ip ranges from the url
+        logging.debug(f'URL: {message["url"]}')
+        logging.debug(f'MD5: {message["md5"]}')
+        ip_ranges: Dict[str, Any] = json.loads(get_ip_groups_json(message['url'], message['md5']))
+        logging.info('Got "ip-ranges.json" file')
+        logging.info(f'SyncToken: {ip_ranges["syncToken"]}')
+        logging.info(f'CreateDate: {ip_ranges["createDate"]}')
+        logging.debug(f'File content: {ip_ranges}')
+
+        # Extract the service ranges
+        # Each service name from config file will be a key on returned dictionary
+        # service_ranges => Dict[str, ServiceIPRange]
+        # keys 'ipv4' and 'ipv6' will ALWAYS be a valid list.
+        # If no IP range is found, it will be an empty list
+        # Example:
+        # {
+        #     'CLOUDFRONT': {
+        #         'ipv4': [
+        #             '1.1.1.1/32',
+        #             '2.2.2.2/32'
+        #         ],
+        #         'ipv6': [
+        #             'aaaa::1/56'
+        #         ]
+        #     },
+        #     'API_GATEWAY': {
+        #         'ipv4': [
+        #             '3.3.3.3/32'
+        #         ],
+        #         'ipv6': []
+        #     }
+        # }
+        service_ranges: Dict[str, ServiceIPRange] = get_ranges_for_service(ip_ranges, config_services)
+        logging.info(f'Service IP ranges keys: {service_ranges.keys()}')
+        logging.debug(f'Dictionary with service IP ranges: {service_ranges}')
+
+        # Dictonary to return from this function
+        resource_names: Dict[str, Dict[str, list[str]]] = {
+            'PrefixList': {'created': [], 'updated':[]},
+            'WafIPSet': {'created': [], 'updated':[]}
+        }
+        service_name: str = ''
+        should_summarize: bool = False
+
+        # Create or Update the appropriate resource for each service range found
+        ### Prefix List
+        logging.info('Handling VPC Prefix List')
+        vpc_prefix_lists: Dict[str, Dict] = {}
+        for config_service in config_services['Services']:
+            service_name = config_service['Name']
+
+            logging.info(f'Start handle VPC Prefix List for "{service_name}"')
+            if service_name not in service_ranges:
+                logging.warning(f'Service name "{service_name}" not found in service ranges variable. This condition should NEVER happens. Possible bug in the code. Please investigate.')
+            else:
+                # Handle Prefix List
+                if 'PrefixList' not in config_service:
+                    logging.info(f'Service "{service_name}" not configured with "PrefixList"')
+                else:
+                    if not config_service['PrefixList']['Enable']:
+                        logging.info(f'Service "{service_name}" is configured with "PrefixList" but it is not enable')
+                    else:
+                        try:
+                            # Will list VPC Prefix Lists only once
+                            if not vpc_prefix_lists:
+                                logging.info('Will get the list of VPC Prefix List for the first time')
+                                vpc_prefix_lists = list_prefix_lists(ec2_client)
+
+                            should_summarize = config_service['PrefixList']['Summarize']
+                            prefix_list_names: Dict[str, list[str]] = manage_prefix_list(ec2_client, vpc_prefix_lists, service_name, service_ranges, should_summarize)
+                            resource_names['PrefixList']['created'] += prefix_list_names['created']
+                            resource_names['PrefixList']['updated'] += prefix_list_names['updated']
+                        except Exception as error:
+                            logging.error("Error handling VPC Prefix List. It will not block the execution. It will continue to other services and resources.")
+                            logging.exception(error)
+            logging.info(f'Finish handle VPC Prefix List for "{service_name}"')
+
+        # Create or Update the appropriate resource for each service range found
+        ### WAF IPSet
+        logging.info('Handling WAF IPSet')
+        waf_ipsets_by_scope: Dict[str, Dict] = {}
+        for config_service in config_services['Services']:
+            service_name = config_service['Name']
+
+            logging.info(f'Start handle WAF IPSet for "{service_name}"')
+            if service_name not in service_ranges:
+                logging.warning(f'Service name "{service_name}" not found in service ranges variable. This condition should NEVER happens. Possible bug in the code. Please investigate.')
+            else:
+                # Handle WAF IPSet
+                if 'WafIPSet' not in config_service:
+                    logging.info(f'Service "{service_name}" not configured with "WafIPSet"')
+                else:
+                    if not config_service['WafIPSet']['Enable']:
+                        logging.info(f'Service "{service_name}" is configured with "WafIPSet" but it is not enable')
+                    else:
+                        # Scope can be 'CLOUDFRONT' or 'REGIONAL'
+                        for ipset_scope in config_service['WafIPSet']['Scopes']:
+                            logging.info(f'Service "{service_name}" WAF Scope "{ipset_scope}"')
+                            try:
+                                waf_ipsets: Dict[str, Dict] = {}
+                                # Will list WAF IPSets only once for each scope
+                                if ipset_scope in waf_ipsets_by_scope:
+                                    waf_ipsets = waf_ipsets_by_scope[ipset_scope]
+                                else:
+                                    logging.info(f'Will get the list of WAF IPSets for the first time for scope "{ipset_scope}"')
+                                    waf_ipsets = list_waf_ipset(waf_client, ipset_scope)
+                                    waf_ipsets_by_scope[ipset_scope] = waf_ipsets
+
+                                should_summarize = config_service['WafIPSet']['Summarize']
+                                ipset_names: Dict[str, list[str]] = manage_waf_ipset(waf_client, waf_ipsets, service_name, ipset_scope, service_ranges, should_summarize)
+                                resource_names['WafIPSet']['created'] += ipset_names['created']
+                                resource_names['WafIPSet']['updated'] += ipset_names['updated']
+                            except Exception as error:
+                                logging.error("Error handling WAF IPSet. It will not block the execution. It will continue to other services and resources.")
+                                logging.exception(error)
+            logging.info(f'Finish handle WAF IPSet for "{service_name}"')
+
+    except Exception as error:
+        logging.exception(error)
+        raise error
+
+    logging.debug(f'Function return: {resource_names}')
+    logging.info('lambda_handler end')
+    return resource_names
 
 
 # if __name__ == '__main__':

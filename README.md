@@ -12,6 +12,11 @@ The resources are created or updated in the region where the CloudFormation stac
 > https://aws.amazon.com/about-aws/whats-new/2022/02/amazon-cloudfront-managed-prefix-list/
 
 
+> **NOTE**  
+> This is an upgraded version of the repository below. This repo add support for VPC Prefix List and allow you to have resources for more than one service.  
+> https://github.com/aws-samples/aws-waf-ipset-auto-update-aws-ip-ranges
+
+
 ## Overview
 
 The CloudFormation template `cloudformation/template.yml` creates a stack with the following resources:
@@ -44,18 +49,28 @@ It supports to create or update the following resource:
 * WAF IPset (only WAFv2, WAF classic is not supported)
 * VPC Prefix List
 
-> **NOTE:** If you miss some AWS resource that should be supported, fell free to open an issue or contribute with a pull request.
+> **NOTE**  
+> If you miss some AWS resource that should be supported, feel free to open an issue or contribute with a pull request.  
+> Keep in mind that you can reference a prefix list in the following AWS resources:
+> * VPC security groups
+> * Subnet route tables
+> * Transit gateway route tables
+> * AWS Network Firewall rule groups
+> 
+> It will create or update AWS resource, but it will NEVER remove it after it is created.  
+> As soon it is created it can only be updated by this solution.  
+> If you need to remove any resource created by solution you need to do it manually.
 
 ### Considerations
 
-* Lambda code MUST have a config file called `services.json` in the root path. See below more details about it's format.
+* Lambda code MUST have a config file called `services.json` in the root path. See below more details about its format.
 * WAF IPSet is ALWAYS updated when Lambda function executes.
 * VPC Prefix List will just be updated it there are entries to remove or to add.
 * When VPC Prefix List is created, the `max entries` configuration will be the length of current IP ranges for that service plus 10.
-* When VPC Prefix List is updated, if current `max entries` configuration is lower than the length of current IP ranges for that service, it will change the `max entries` to the length of current IP ranges. If it fail to update, due to size restriction where Prefix List is used, it will NOT update the IP ranges.
-* If it fail to create or update resouce for any service, the code will not stop, it will continue to handle the other resource and services.
-* It only creates resource for service and IP version if there is at least one IP range. Otherwise it will not create.
-* Resouces are named as `aws-ip-ranges-<SERVICE_NAME>-<IP_VERSION>`.  
+* When VPC Prefix List is updated, if current `max entries` configuration is lower than the length of current IP ranges for that service, it will change the `max entries` to the length of current IP ranges. If it fails to update, due to size restriction where Prefix List is used, it will NOT update the IP ranges.
+* If it fails to create or update resource for any service, the code will not stop, it will continue to handle the other resource and services.
+* It only creates resource for service and IP version if there is at least one IP range. Otherwise, it will not create.
+* Resources are named as `aws-ip-ranges-<SERVICE_NAME>-<IP_VERSION>`.  
 Where:  
   * `<SERVICE_NAME>` is the service name inside `ip-ranges.json` file. Converted to lower case and replaced `_` with `-`.  
   * `<IP_VERSION>` is `ipv4` or `ipv6`.
@@ -64,6 +79,10 @@ Examples:
 * `aws-ip-ranges-api-gateway-ipv4`
 * `aws-ip-ranges-route53-healthchecks-ipv4`
 * `aws-ip-ranges-route53-healthchecks-ipv6`
+
+> **NOTE ABOUT REGIONS DEPLOY**  
+> There is no reason to deploy this solution twice inside the same region.  
+> If you have a reason for doing it, please open an issue and let's talk about it.
 
 ## Lambda configuration
 
@@ -95,7 +114,7 @@ See below the file commented.
             # Please not that there is one region called GLOBAL inside ip-ranges.json file.
             # If you want to get IP ranges from all region keep the array empty.
             #
-            # If you specify more than one region, or keep it empty, it will aggregate the IP ranges from those region inside the resource at the region where Lambda function is running.
+            # If you specify more than one region, or keep it empty, it will aggregate the IP ranges from those regions inside the resource at the region where Lambda function is running.
             # It will NOT create the resources on each region specified.
             "Regions": ["sa-east-1"],
             
@@ -114,7 +133,7 @@ See below the file commented.
                 # WAF IPSet scope to create or update resources. Possible values are ONLY "CLOUDFRONT" and "REGIONAL".
                 # Case is sensitive.
                 #
-                # Note that "CLOUDFRONT" can ONLY be used in North Virginia (us-east-1) region. So you MUST deploy it on North Virginia (us-east-1) region.
+                # Note that "CLOUDFRONT" can ONLY be used in North Virginia (us-east-1) region. So, you MUST deploy it on North Virginia (us-east-1) region.
                 "Scopes": ["CLOUDFRONT", "REGIONAL"]
             }
         }
@@ -202,7 +221,7 @@ export AWS_REGION="sa-east-1"
 export CFN_STACK_NAME="update-aws-ip-ranges"
 ```
 
-> **IMPORTANT:** Please use AWS CLI v2
+> **IMPORTANT:** Please, use AWS CLI v2
 
 ### 1. Validate CloudFormation template
 
@@ -229,6 +248,8 @@ aws cloudformation create-stack --stack-name "${CFN_STACK_NAME}" \
 If the stack creation fails, troubleshoot by reviewing the stack events. The typical failure reasons are insufficient IAM permissions.
 
 ### 3. Create the packaged code
+
+Before you package it, please change `lambda/services.json` file according to your requirement. For more information read the section `Lambda configuration` above.
 
 ```bash
 zip --junk-paths update_aws_ip_ranges.zip lambda/update_aws_ip_ranges.py lambda/services.json
@@ -305,8 +326,14 @@ Remove the temporary files and remove CloudFormation stack.
 ```bash
 rm update_aws_ip_ranges.zip
 rm lambda_return.json
-aws cloudformation delete-stack --stack-name 'update-aws-ip-ranges'
+aws cloudformation delete-stack --stack-name "${CFN_STACK_NAME}"
+unset AWS_REGION
+unset CFN_STACK_NAME
 ```
+
+> **ATTENTION**  
+> When you remove CloudFormation stack it will NOT remove WAF IPSet or VPC Prefix List created by this solution.  
+> If you want to remove it, you need to do it manually.
 
 ## Lambda function customization
 
@@ -325,7 +352,7 @@ After the stack is created, you can customize the Lambda function's execution lo
 
 > An error occurred (WAFInvalidParameterException) when calling the ListIPSets operation: Error reason: The scope is not valid., field: SCOPE_VALUE, parameter: CLOUDFRONT
 
-Scope name `CLOUDFRONT` is correct, but it MUST be running on North Virginia (us-east-1) region. If it runs outside North Virginia you will see the error above.  
+Scope name `CLOUDFRONT` is correct, but it MUST be running on North Virginia (us-east-1) region. If it runs outside North Virginia, you will see the error above.  
 Please make sure it is running on North Virginia (us-east-1) region.
 
 ## Security
