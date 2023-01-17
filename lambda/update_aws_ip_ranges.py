@@ -352,12 +352,27 @@ def list_waf_ipset(client: Any, ipset_scope: str) -> Dict[str, Dict]:
     logging.debug(f'Parameter client: {client}')
     logging.debug(f'Parameter ipset_scope: {ipset_scope}')
 
+    # Put all IPSets inside a dictionary
+    ipsets: Dict[str, Dict] = {}
+
     response = client.list_ip_sets(Scope=ipset_scope)
     logging.info(f'Listed IPSet with scope "{ipset_scope}"')
     logging.debug(f'Response: {response}')
+    while True:
+        for ipset in response['IPSets']:
+            ipsets[ipset['Name']] = ipset
+        
+        if not 'NextMarker' in response:
+            break
+        
+        # As there is a NextMarket it needs to perform the list call again
+        next_marker = response['NextMarker']
+        logging.info(f'Found NextMarker "{next_marker}"')
+        response = client.list_ip_sets(Scope=ipset_scope, NextMarker=next_marker)
+        logging.info(f'Listed IPSet with scope "{ipset_scope}" and NextMarker "{next_marker}"')
+        logging.debug(f'Response: {response}')
 
-    # Put all IPSets inside a dictionary
-    ipsets: Dict[str, Dict] = {ipset['Name']:ipset for ipset in response['IPSets']}
+
     logging.debug(f'Function return: {ipsets}')
     logging.info('list_waf_ipset end')
     return ipsets
@@ -408,12 +423,26 @@ def list_prefix_lists(client: Any) -> Dict[str, Dict]:
     logging.info('list_prefix_lists start')
     logging.debug(f'Parameter client: {client}')
 
+    # Put all VPC Prefix Lists inside a dictionary
+    prefix_lists: Dict[str, Dict] = {}
+
     response = client.describe_managed_prefix_lists()
     logging.info('Listed VPC Prefix Lists')
     logging.debug(f'Response: {response}')
+    while True:
+        for prefix_list in response['PrefixLists']:
+            prefix_lists[prefix_list['PrefixListName']] = prefix_list
 
-    # Put all VPC Prefix Lists inside a dictionary
-    prefix_lists: Dict[str, Dict] = {prefix_list['PrefixListName']:prefix_list for prefix_list in response['PrefixLists']}
+        if not 'NextToken' in response:
+            break
+
+        # As there is a NextToken it needs to perform the list call again
+        next_token = response['NextToken']
+        logging.info(f'Found NextToken "{next_token}"')
+        response = client.describe_managed_prefix_lists(NextToken=next_token)
+        logging.info(f'Listed VPC Prefix Lists with NextToken "{next_token}"')
+        logging.debug(f'Response: {response}')
+
     logging.debug(f'Function return: {prefix_lists}')
     logging.info('list_prefix_lists end')
     return prefix_lists
@@ -766,7 +795,7 @@ def lambda_handler(event, context):
         logging.exception(error)
         raise error
 
-    logging.debug(f'Function return: {resource_names}')
+    logging.info(f'Function return: {resource_names}')
     logging.info('lambda_handler end')
     return resource_names
 

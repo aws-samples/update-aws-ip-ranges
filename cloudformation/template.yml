@@ -62,13 +62,13 @@ Resources:
               - Effect: 'Allow'
                 Action:
                   - 'logs:CreateLogGroup'
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
 
               - Effect: 'Allow'
                 Action:
                   - 'logs:CreateLogStream'
                   - 'logs:PutLogEvents'
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*LambdaUpdateIPRanges*:*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*LambdaUpdateIPRanges*:*'
 
 
         - PolicyName: 'WAFPermissions'
@@ -104,8 +104,8 @@ Resources:
                 Action:
                   - 'wafv2:TagResource'
                 Resource:
-                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
-                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
                 Condition:
                   StringLike:
                     'aws:ResourceTag/Name':
@@ -123,8 +123,8 @@ Resources:
                   - 'wafv2:GetIPSet'
                   - 'wafv2:UpdateIPSet'
                 Resource:
-                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
-                  - !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
                 Condition:
                   StringLike:
                     'aws:ResourceTag/Name':
@@ -151,15 +151,21 @@ Resources:
                 Action:
                   - 'ec2:GetManagedPrefixListEntries'
                   - 'ec2:ModifyManagedPrefixList'
-                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                  - 'ec2:CreateTags'
+                Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
                 Condition:
                   StringEquals:
                     'ec2:Region': !Ref AWS::Region
+                    'aws:ResourceTag/ManagedBy': 'update-aws-ip-ranges'
+                  StringLike:
+                    'aws:ResourceTag/Name':
+                      - 'aws-ip-ranges-*-ipv4'
+                      - 'aws-ip-ranges-*-ipv6'
 
               - Effect: 'Allow'
                 Action:
                   - 'ec2:CreateManagedPrefixList'
-                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
                 Condition:
                   StringEquals:
                     'ec2:Region': !Ref AWS::Region
@@ -179,19 +185,11 @@ Resources:
               - Effect: 'Allow'
                 Action:
                   - 'ec2:CreateTags'
-                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
+                Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
                 Condition:
                   StringEquals:
                     'ec2:Region': !Ref AWS::Region
                     'ec2:CreateAction' : 'CreateManagedPrefixList'
-
-              - Effect: 'Allow'
-                Action:
-                  - 'ec2:CreateTags'
-                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:prefix-list/*'
-                Condition:
-                  StringEquals:
-                    'ec2:Region': !Ref AWS::Region
 
   LambdaPermission:
     Type: 'AWS::Lambda::Permission'

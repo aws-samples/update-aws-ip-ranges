@@ -65,7 +65,7 @@ It supports to create or update the following resource:
 
 * Lambda code MUST have a config file called `services.json` in the root path. See below more details about its format.
 * WAF IPSet is ALWAYS updated when Lambda function executes.
-* VPC Prefix List will just be updated it there are entries to remove or to add.
+* VPC Prefix List will just be updated if there are entries to remove or to add.
 * When VPC Prefix List is created, the `max entries` configuration will be the length of current IP ranges for that service plus 10.
 * When VPC Prefix List is updated, if current `max entries` configuration is lower than the length of current IP ranges for that service, it will change the `max entries` to the length of current IP ranges. If it fails to update, due to size restriction where Prefix List is used, it will NOT update the IP ranges.
 * If it fails to create or update resource for any service, the code will not stop, it will continue to handle the other resource and services.
