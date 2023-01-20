@@ -1,7 +1,7 @@
-'''
+"""
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: MIT-0
-'''
+"""
 
 import hashlib
 import ipaddress
@@ -11,7 +11,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Union
+from typing import Any, Union
 from urllib import request
 
 import boto3  # type: ignore
@@ -77,7 +77,7 @@ class IPv4List():
         if len(self.ip_list) > 1:
             self.ip_list = sorted(self.ip_list, key = ipaddress.IPv4Network)
 
-    def asdict(self) -> Dict:
+    def asdict(self) -> dict:
         """Return a dictionary from this object"""
         return asdict(self)
 
@@ -91,23 +91,21 @@ class IPv6List():
     def summarized(self) -> list[str]:
         """Summarize this list as IPv6 network and sort it"""
         if not self.__summarized_ip_list:
-            if len(self.ip_list) == 1:
-                return self.ip_list
-
             summarized_sorted = sorted(
                 ipaddress.collapse_addresses(
                     [ipaddress.IPv6Network(addr) for addr in self.ip_list]
                 )
             )
-            self.__summarized_ip_list = [net.with_prefixlen for net in summarized_sorted]
+            self.__summarized_ip_list = [net.exploded for net in summarized_sorted]
         return self.__summarized_ip_list
 
     def sort(self) -> None:
         """Sort this list as IPv6 network"""
         if len(self.ip_list) > 1:
-            self.ip_list = sorted(self.ip_list, key = ipaddress.IPv6Network)
+            sorted_list = sorted([ipaddress.IPv6Network(addr) for addr in self.ip_list])
+            self.ip_list = [net.exploded for net in sorted_list]
 
-    def asdict(self) -> Dict:
+    def asdict(self) -> dict:
         """Return a dictionary from this object"""
         return asdict(self)
 
@@ -117,7 +115,7 @@ class ServiceIPRange():
     ipv4: IPv4List = field(default_factory=IPv4List)
     ipv6: IPv6List = field(default_factory=IPv6List)
 
-    def asdict(self) -> Dict[str, Union[IPv4List, IPv6List]]:
+    def asdict(self) -> dict[str, Union[IPv4List, IPv6List]]:
         """Return a dictionary from this object"""
         return {'ipv4': self.ipv4, 'ipv6': self.ipv6}
 
@@ -158,14 +156,14 @@ def get_ip_groups_json(url: str, expected_hash: str) -> str:
     logging.info('get_ip_groups_json end')
     return ip_json
 
-def get_ranges_for_service(ranges: Dict, config_services: Dict) -> Dict[str, ServiceIPRange]:
+def get_ranges_for_service(ranges: dict, config_services: dict) -> dict[str, ServiceIPRange]:
     """Gets IPv4 and IPv6 prefixes from the matching services"""
     logging.info('get_ranges_for_service start')
     logging.debug(f'Parameter ranges: {ranges}')
     logging.debug(f'Parameter config_services: {config_services}')
 
-    service_ranges: Dict[str, ServiceIPRange] = {}
-    service_control: Dict[str, bool] = {}
+    service_ranges: dict[str, ServiceIPRange] = {}
+    service_control: dict[str, bool] = {}
     for config_service in config_services['Services']:
         service_name = config_service['Name']
         if len(config_service['Regions']) > 0:
@@ -223,7 +221,7 @@ def get_ranges_for_service(ranges: Dict, config_services: Dict) -> Dict[str, Ser
 
 
 ### WAF IPSet functions
-def manage_waf_ipset(client: Any, waf_ipsets: Dict[str, Dict], service_name: str, ipset_scope: str, service_ranges: Dict[str, ServiceIPRange], should_summarize: bool) -> Dict[str, list[str]]:
+def manage_waf_ipset(client: Any, waf_ipsets: dict[str, dict], service_name: str, ipset_scope: str, service_ranges: dict[str, ServiceIPRange], should_summarize: bool) -> dict[str, list[str]]:
     """Create or Update WAF IPSet"""
     logging.info('manage_waf_ipset start')
     logging.debug(f'Parameter client: {client}')
@@ -234,7 +232,7 @@ def manage_waf_ipset(client: Any, waf_ipsets: Dict[str, Dict], service_name: str
     logging.debug(f'Parameter should_summarize: {should_summarize}')
 
     # Dictionary to return the IPSet names that will be created or updated
-    ipset_names: Dict[str, list[str]] = {'created': [], 'updated': []}
+    ipset_names: dict[str, list[str]] = {'created': [], 'updated': []}
 
     for ip_version in ['ipv4', 'ipv6']:
         if not service_ranges[service_name].asdict()[ip_version].ip_list:
@@ -251,8 +249,9 @@ def manage_waf_ipset(client: Any, waf_ipsets: Dict[str, Dict], service_name: str
             if ipset_name in waf_ipsets:
                 # IPSets exists, so will update it
                 logging.debug(f'WAF IPSet "{ipset_name}" found. Will update it.')
-                update_waf_ipset(client, ipset_name, ipset_scope, waf_ipsets[ipset_name], address_list)
-                ipset_names['updated'].append(ipset_name)
+                updated: bool = update_waf_ipset(client, ipset_name, ipset_scope, waf_ipsets[ipset_name], address_list)
+                if updated:
+                    ipset_names['updated'].append(ipset_name)
             else:
                 # IPSet not found, so will create it
                 # IPAddressVersion can be 'IPV4' or 'IPV6'
@@ -304,7 +303,7 @@ def create_waf_ipset(client: Any, ipset_name: str, ipset_scope: str, ipset_versi
     logging.debug('Function return: None')
     logging.info('create_waf_ipset end')
 
-def update_waf_ipset(client: Any, ipset_name: str, ipset_scope: str, waf_ipset: Dict[str, Any], address_list: list[str]) -> None:
+def update_waf_ipset(client: Any, ipset_name: str, ipset_scope: str, waf_ipset: dict[str, Any], address_list: list[str]) -> bool:
     """Updates the AWS WAF IP set"""
     logging.info('update_waf_ipset start')
     logging.debug(f'Parameter client: {client}')
@@ -322,38 +321,59 @@ def update_waf_ipset(client: Any, ipset_name: str, ipset_scope: str, waf_ipset: 
     logging.debug(f'ipset_description: {ipset_description}')
     logging.debug(f'ipset_arn: {ipset_arn}')
 
-    # Update IPSet
-    logging.info(f'Updating IPSet "{ipset_name}" with scope "{ipset_scope}" with lock_token "{ipset_lock_token}" with {len(address_list)} CIDRs. List: {address_list}')
-    response = client.update_ip_set(
-        Name=ipset_name,
-        Scope=ipset_scope,
-        Id=ipset_id,
-        Description=ipset_description,
-        Addresses=address_list,
-        LockToken=ipset_lock_token
-    )
-    logging.info(f'Updated IPSet "{ipset_name}"')
-    logging.debug(f'Response: {response}')
+    # It uses entries_to_remove and entries_to_add just for control if it needs to update IPSet or not.
+    # If it needs to update, it will always use the full list of addresses from address_list
 
-    # Update IPSet tags
-    logging.info(f'Updating Tags for "{ipset_name}" with ARN "{ipset_arn}"')
-    response = client.tag_resource(
-        ResourceARN=ipset_arn,
-        Tags=[{'Key': 'UpdatedAt','Value': datetime.now(timezone.utc).isoformat()}]
-    )
-    logging.info(f'Updated Tags for "{ipset_name}" with ARN {ipset_arn}')
-    logging.debug(f'Response: {response}')
-    logging.debug('Function return: None')
+    network_list: list[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]] = [ipaddress.ip_network(net) for net in address_list]
+    # Get current IPSet entries
+    current_entries: dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str] = get_ip_set_entries(client, ipset_name, ipset_scope, ipset_id)
+    # Filter to get the list of entries to remove from IPSet
+    entries_to_remove: list[str] = [cidr.with_prefixlen for cidr in current_entries.keys() if cidr not in network_list]
+    # Filter to get the list of entries to add into Prefix List
+    entries_to_add: list[str] = [cidr.with_prefixlen for cidr in network_list if cidr not in current_entries]
+    logging.debug(f'current_entries: {current_entries}')
+    logging.debug(f'entries_to_remove: {entries_to_remove}')
+    logging.debug(f'entries_to_add: {entries_to_add}')
+
+    updated: bool = False
+    if (not entries_to_add) and (not entries_to_remove):
+        logging.info(f'Nothing to add or remove at "{ipset_name}"')
+    else:
+        # Update IPSet
+        logging.info(f'Updating IPSet "{ipset_name}" with scope "{ipset_scope}" with lock_token "{ipset_lock_token}" with {len(address_list)} CIDRs. List: {address_list}')
+        response = client.update_ip_set(
+            Name=ipset_name,
+            Scope=ipset_scope,
+            Id=ipset_id,
+            Description=ipset_description,
+            Addresses=address_list,
+            LockToken=ipset_lock_token
+        )
+        updated = True
+        logging.info(f'Updated IPSet "{ipset_name}"')
+        logging.debug(f'Response: {response}')
+
+        # Update IPSet tags
+        logging.info(f'Updating Tags for "{ipset_name}" with ARN "{ipset_arn}"')
+        response = client.tag_resource(
+            ResourceARN=ipset_arn,
+            Tags=[{'Key': 'UpdatedAt','Value': datetime.now(timezone.utc).isoformat()}]
+        )
+        logging.info(f'Updated Tags for "{ipset_name}" with ARN {ipset_arn}')
+        logging.debug(f'Response: {response}')
+
+    logging.debug(f'Function return: {updated}')
     logging.info('update_waf_ipset end')
+    return updated
 
-def list_waf_ipset(client: Any, ipset_scope: str) -> Dict[str, Dict]:
+def list_waf_ipset(client: Any, ipset_scope: str) -> dict[str, dict]:
     """List all AWS WAF IP set from specific scope"""
     logging.info('list_waf_ipset start')
     logging.debug(f'Parameter client: {client}')
     logging.debug(f'Parameter ipset_scope: {ipset_scope}')
 
     # Put all IPSets inside a dictionary
-    ipsets: Dict[str, Dict] = {}
+    ipsets: dict[str, dict] = {}
 
     response = client.list_ip_sets(Scope=ipset_scope)
     logging.info(f'Listed IPSet with scope "{ipset_scope}"')
@@ -361,10 +381,10 @@ def list_waf_ipset(client: Any, ipset_scope: str) -> Dict[str, Dict]:
     while True:
         for ipset in response['IPSets']:
             ipsets[ipset['Name']] = ipset
-        
+
         if not 'NextMarker' in response:
             break
-        
+
         # As there is a NextMarket it needs to perform the list call again
         next_marker = response['NextMarker']
         logging.info(f'Found NextMarker "{next_marker}"')
@@ -377,9 +397,34 @@ def list_waf_ipset(client: Any, ipset_scope: str) -> Dict[str, Dict]:
     logging.info('list_waf_ipset end')
     return ipsets
 
+def get_ip_set_entries(client: Any, ipset_name: str, ipset_scope: str, ipset_id: str) -> dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str]:
+    """Get AWS WAF IP set entries"""
+    logging.info('get_ip_set_entries start')
+    logging.debug(f'Parameter client: {client}')
+    logging.debug(f'Parameter ipset_name: {ipset_name}')
+    logging.debug(f'Parameter ipset_scope: {ipset_scope}')
+    logging.debug(f'Parameter ipset_id: {ipset_id}')
+
+    response = client.get_ip_set(
+        Name=ipset_name,
+        Scope=ipset_scope,
+        Id=ipset_id
+    )
+    logging.info(f'Got IPSet with name "{ipset_name}" and scope "{ipset_scope}" and ID "{ipset_id}"')
+    logging.debug(f'Response: {response}')
+
+    # Add entries in a dictionary
+    entries: dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str] = {}
+    for entrie in response['IPSet']['Addresses']:
+        network = ipaddress.ip_network(entrie)
+        entries[network] = entrie
+    logging.debug(f'Function return: {entries}')
+    logging.info('get_ip_set_entries end')
+    return entries
+
 
 ### VPC Prefix List
-def manage_prefix_list(client: Any, vpc_prefix_lists: Dict[str, Dict], service_name: str, service_ranges: Dict[str, ServiceIPRange], should_summarize: bool) -> Dict[str, list[str]]:
+def manage_prefix_list(client: Any, vpc_prefix_lists: dict[str, dict], service_name: str, service_ranges: dict[str, ServiceIPRange], should_summarize: bool) -> dict[str, list[str]]:
     """Create or Update VPC Prefix List"""
     logging.info('manage_prefix_list start')
     logging.debug(f'Parameter client: {client}')
@@ -389,7 +434,7 @@ def manage_prefix_list(client: Any, vpc_prefix_lists: Dict[str, Dict], service_n
     logging.debug(f'Parameter should_summarize: {should_summarize}')
 
     # Dictionary to return the Prefix List names that will be created or updated
-    prefix_list_names: Dict[str, list[str]] = {'created': [], 'updated': []}
+    prefix_list_names: dict[str, list[str]] = {'created': [], 'updated': []}
 
     for ip_version in ['ipv4', 'ipv6']:
         if not service_ranges[service_name].asdict()[ip_version].ip_list:
@@ -405,7 +450,7 @@ def manage_prefix_list(client: Any, vpc_prefix_lists: Dict[str, Dict], service_n
             if prefix_list_name in vpc_prefix_lists:
                 # Prefix List exists, so will update it
                 logging.debug(f'VPC Prefix List "{prefix_list_name}" found. Will update it.')
-                updated = update_prefix_list(client, prefix_list_name, vpc_prefix_lists[prefix_list_name], address_list)
+                updated: bool = update_prefix_list(client, prefix_list_name, vpc_prefix_lists[prefix_list_name], address_list)
                 if updated:
                     prefix_list_names['updated'].append(prefix_list_name)
             else:
@@ -418,13 +463,13 @@ def manage_prefix_list(client: Any, vpc_prefix_lists: Dict[str, Dict], service_n
     logging.info('manage_prefix_list end')
     return prefix_list_names
 
-def list_prefix_lists(client: Any) -> Dict[str, Dict]:
+def list_prefix_lists(client: Any) -> dict[str, dict]:
     """List all VPC Prefix List"""
     logging.info('list_prefix_lists start')
     logging.debug(f'Parameter client: {client}')
 
     # Put all VPC Prefix Lists inside a dictionary
-    prefix_lists: Dict[str, Dict] = {}
+    prefix_lists: dict[str, dict] = {}
 
     response = client.describe_managed_prefix_lists()
     logging.info('Listed VPC Prefix Lists')
@@ -447,7 +492,7 @@ def list_prefix_lists(client: Any) -> Dict[str, Dict]:
     logging.info('list_prefix_lists end')
     return prefix_lists
 
-def get_prefix_list_by_id(client: Any, prefix_list_id: str) -> Dict[str, Any]:
+def get_prefix_list_by_id(client: Any, prefix_list_id: str) -> dict[str, Any]:
     """Get VPC Prefix List by ID"""
     logging.info('get_prefix_list_by_id start')
     logging.debug(f'Parameter client: {client}')
@@ -457,7 +502,7 @@ def get_prefix_list_by_id(client: Any, prefix_list_id: str) -> Dict[str, Any]:
     logging.info(f'Got VPC Prefix Lists with ID: {prefix_list_id}')
     logging.debug(f'Response: {response}')
 
-    prefix_list: Dict[str, Any] = response['PrefixLists'][0]
+    prefix_list: dict[str, Any] = response['PrefixLists'][0]
     logging.debug(f'Function return: {prefix_list}')
     logging.info('get_prefix_list_by_id end')
     return prefix_list
@@ -471,7 +516,7 @@ def create_prefix_list(client: Any, prefix_list_name: str, prefix_list_ip_versio
     logging.debug(f'Parameter address_list: {address_list}')
 
     # Create the list of Prefix List entries to create
-    prefix_list_entries: list[Dict] = []
+    prefix_list_entries: list[dict] = []
     for addr in address_list:
         prefix_list_entries.append(
             {
@@ -519,7 +564,7 @@ def create_prefix_list(client: Any, prefix_list_name: str, prefix_list_ip_versio
     logging.debug('Function return: None')
     logging.info('create_prefix_list end')
 
-def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: Dict[str, Any], address_list: list[str]) -> bool:
+def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: dict[str, Any], address_list: list[str]) -> bool:
     """Updates the AWS VPC Prefix List"""
     logging.info('update_prefix_list start')
     logging.debug(f'Parameter client: {client}')
@@ -534,12 +579,13 @@ def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: Dict[str
     logging.debug(f'prefix_list_max_entries: {prefix_list_max_entries}')
     logging.debug(f'prefix_list_version: {prefix_list_version}')
 
+    network_list = [ipaddress.ip_network(net) for net in address_list]
     # Get current Prefix List entries
-    current_entries: Dict[str, str] = get_prefix_list_entries(client, prefix_list_name, prefix_list_id, prefix_list_version)
+    current_entries: dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str] = get_prefix_list_entries(client, prefix_list_name, prefix_list_id, prefix_list_version)
     # Filter to get the list of entries to remove from Prefix List
-    entries_to_remove: list[Dict] = [{'Cidr': cidr} for cidr in current_entries.keys() if cidr not in address_list]
+    entries_to_remove: list[dict] = [{'Cidr': cidr.with_prefixlen} for cidr in current_entries.keys() if cidr not in network_list]
     # Filter to get the list of entries to add into Prefix List
-    entries_to_add: list[Dict] = [{'Cidr': cidr, 'Description': DESCRIPTION} for cidr in address_list if cidr not in current_entries]
+    entries_to_add: list[dict] = [{'Cidr': cidr.with_prefixlen, 'Description': DESCRIPTION} for cidr in network_list if cidr not in current_entries]
     logging.debug(f'current_entries: {current_entries}')
     logging.debug(f'entries_to_remove: {entries_to_remove}')
     logging.debug(f'entries_to_add: {entries_to_add}')
@@ -584,7 +630,7 @@ def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: Dict[str
                         seconds_to_wait: int = count + (count + 1)
                         logging.info(f'Waiting {seconds_to_wait} seconds')
                         time.sleep(seconds_to_wait)
-                        wait_prefix_list: Dict[str, Any] = get_prefix_list_by_id(client, prefix_list_id)
+                        wait_prefix_list: dict[str, Any] = get_prefix_list_by_id(client, prefix_list_id)
                         if wait_prefix_list['State'] == 'modify-complete':
                             break
                     else:
@@ -621,7 +667,7 @@ def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: Dict[str
     logging.info('update_prefix_list end')
     return updated
 
-def get_prefix_list_entries(client: Any, prefix_list_name: str, prefix_list_id: str, prefix_list_version: int) -> Dict[str, str]:
+def get_prefix_list_entries(client: Any, prefix_list_name: str, prefix_list_id: str, prefix_list_version: int) -> dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str]:
     """Get the AWS VPC Prefix List entries"""
     logging.info('get_prefix_list_entries start')
     logging.debug(f'Parameter client: {client}')
@@ -638,12 +684,13 @@ def get_prefix_list_entries(client: Any, prefix_list_name: str, prefix_list_id: 
     logging.debug(f'Response: {response}')
 
     # Add entries in a dictionary
-    entries: Dict[str, str] = {}
+    entries: dict[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], str] = {}
     for entrie in response['Entries']:
+        network: Union[ipaddress.IPv4Network, ipaddress.IPv6Network] = ipaddress.ip_network(entrie['Cidr'])
         if 'Description' in entrie:
-            entries[entrie['Cidr']] = entrie['Description']
+            entries[network] = entrie['Description']
         else:
-            entries[entrie['Cidr']] = ''
+            entries[network] = ''
     logging.debug(f'Function return: {entries}')
     logging.info('get_prefix_list_entries end')
     return entries
@@ -663,7 +710,7 @@ def lambda_handler(event, context):
         # Read config file to get services and regions
         with open('services.json', 'r', encoding='utf-8') as services_file:
             logging.info('Reading file "services.json"')
-            config_services: Dict[str, Any] = json.loads(services_file.read())
+            config_services: dict[str, Any] = json.loads(services_file.read())
             logging.info(f'Found services: {config_services}')
 
         # If you want different services, set the SERVICES environment variable
@@ -671,13 +718,13 @@ def lambda_handler(event, context):
         # Using 'jq' and 'curl' get the list of possible services like this:
         # curl -s 'https://ip-ranges.amazonaws.com/ip-ranges.json' | jq -r '.prefixes[] | .service' ip-ranges.json | sort -u
 
-        message: Dict[str, Any] = json.loads(event['Records'][0]['Sns']['Message'])
+        message: dict[str, Any] = json.loads(event['Records'][0]['Sns']['Message'])
         logging.debug(f'Message from SNS topic: {message}')
 
         # Load the ip ranges from the url
         logging.debug(f'URL: {message["url"]}')
         logging.debug(f'MD5: {message["md5"]}')
-        ip_ranges: Dict[str, Any] = json.loads(get_ip_groups_json(message['url'], message['md5']))
+        ip_ranges: dict[str, Any] = json.loads(get_ip_groups_json(message['url'], message['md5']))
         logging.info('Got "ip-ranges.json" file')
         logging.info(f'SyncToken: {ip_ranges["syncToken"]}')
         logging.info(f'CreateDate: {ip_ranges["createDate"]}')
@@ -685,7 +732,7 @@ def lambda_handler(event, context):
 
         # Extract the service ranges
         # Each service name from config file will be a key on returned dictionary
-        # service_ranges => Dict[str, ServiceIPRange]
+        # service_ranges => dict[str, ServiceIPRange]
         # keys 'ipv4' and 'ipv6' will ALWAYS be a valid list.
         # If no IP range is found, it will be an empty list
         # Example:
@@ -706,12 +753,12 @@ def lambda_handler(event, context):
         #         'ipv6': []
         #     }
         # }
-        service_ranges: Dict[str, ServiceIPRange] = get_ranges_for_service(ip_ranges, config_services)
+        service_ranges: dict[str, ServiceIPRange] = get_ranges_for_service(ip_ranges, config_services)
         logging.info(f'Service IP ranges keys: {service_ranges.keys()}')
         logging.debug(f'Dictionary with service IP ranges: {service_ranges}')
 
         # Dictonary to return from this function
-        resource_names: Dict[str, Dict[str, list[str]]] = {
+        resource_names: dict[str, dict[str, list[str]]] = {
             'PrefixList': {'created': [], 'updated':[]},
             'WafIPSet': {'created': [], 'updated':[]}
         }
@@ -721,7 +768,7 @@ def lambda_handler(event, context):
         # Create or Update the appropriate resource for each service range found
         ### Prefix List
         logging.info('Handling VPC Prefix List')
-        vpc_prefix_lists: Dict[str, Dict] = {}
+        vpc_prefix_lists: dict[str, dict] = {}
         for config_service in config_services['Services']:
             service_name = config_service['Name']
 
@@ -743,7 +790,7 @@ def lambda_handler(event, context):
                                 vpc_prefix_lists = list_prefix_lists(ec2_client)
 
                             should_summarize = config_service['PrefixList']['Summarize']
-                            prefix_list_names: Dict[str, list[str]] = manage_prefix_list(ec2_client, vpc_prefix_lists, service_name, service_ranges, should_summarize)
+                            prefix_list_names: dict[str, list[str]] = manage_prefix_list(ec2_client, vpc_prefix_lists, service_name, service_ranges, should_summarize)
                             resource_names['PrefixList']['created'] += prefix_list_names['created']
                             resource_names['PrefixList']['updated'] += prefix_list_names['updated']
                         except Exception as error:
@@ -754,7 +801,7 @@ def lambda_handler(event, context):
         # Create or Update the appropriate resource for each service range found
         ### WAF IPSet
         logging.info('Handling WAF IPSet')
-        waf_ipsets_by_scope: Dict[str, Dict] = {}
+        waf_ipsets_by_scope: dict[str, dict] = {}
         for config_service in config_services['Services']:
             service_name = config_service['Name']
 
@@ -773,7 +820,7 @@ def lambda_handler(event, context):
                         for ipset_scope in config_service['WafIPSet']['Scopes']:
                             logging.info(f'Service "{service_name}" WAF Scope "{ipset_scope}"')
                             try:
-                                waf_ipsets: Dict[str, Dict] = {}
+                                waf_ipsets: dict[str, dict] = {}
                                 # Will list WAF IPSets only once for each scope
                                 if ipset_scope in waf_ipsets_by_scope:
                                     waf_ipsets = waf_ipsets_by_scope[ipset_scope]
@@ -783,7 +830,7 @@ def lambda_handler(event, context):
                                     waf_ipsets_by_scope[ipset_scope] = waf_ipsets
 
                                 should_summarize = config_service['WafIPSet']['Summarize']
-                                ipset_names: Dict[str, list[str]] = manage_waf_ipset(waf_client, waf_ipsets, service_name, ipset_scope, service_ranges, should_summarize)
+                                ipset_names: dict[str, list[str]] = manage_waf_ipset(waf_client, waf_ipsets, service_name, ipset_scope, service_ranges, should_summarize)
                                 resource_names['WafIPSet']['created'] += ipset_names['created']
                                 resource_names['WafIPSet']['updated'] += ipset_names['updated']
                             except Exception as error:
@@ -802,5 +849,5 @@ def lambda_handler(event, context):
 
 # if __name__ == '__main__':
 #     with open('test_event.json', 'r') as event_file:
-#         event: Dict[str, Any] = json.loads(event_file.read())
+#         event: dict[str, Any] = json.loads(event_file.read())
 #         lambda_handler(event, None)

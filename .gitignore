@@ -8,3 +8,5 @@ _*.*
 *.zip
 lambda_return.json
 ip-ranges.json
+*.sh
+probeout
