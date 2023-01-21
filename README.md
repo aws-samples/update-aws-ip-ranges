@@ -206,14 +206,27 @@ Example:
 
 These are the overall steps to deploy:
 
+**Setup using CloudFormation**
 1. Validate CloudFormation template file.
 1. Create the CloudFormation stack.
 1. Package the Lambda code into a `.zip` file.
 1. Update Lambda function with the packaged code.
+
+**Setup using Terraform**
+1. Initialize Terraform state
+1. Validate Terraform template.
+1. Apply Terraform template.
+
+**After setup**
 1. Trigger a test Lambda invocation.
 1. Reference resources
 1. Clean-up
 
+
+
+
+
+## Setup using CloudFormation
 To simplify setup and deployment, assign the values to the following variables. Replace the values according to your deployment options.
 
 ```bash
@@ -264,11 +277,63 @@ aws lambda update-function-code --function-name "${FUNCTION_NAME}" --zip-file fi
 
 > **NOTE:** Every time you change Lambda function configuration file `services.json` you need to execute steps 3 and 4 again.
 
-### 5a. Trigger a test Lambda invocation with the AWS CLI
+
+
+
+
+## Setup using Terraform
+
+Terraform template uses the following providers:
+* aws
+* archive
+
+> **IMPORTANT:** Please, use Terraform version 1.3.7 or higher
+
+### 1. Initialize Terraform state
+```bash
+cd terraform/
+terraform init
+```
+
+### 2. Validate Terraform template
+
+Ensure Terraform template is valid before use it.
+
+```bash
+terraform validate
+```
+
+### 3. Apply Terraform template
+
+Before you apply, please change `lambda/services.json` file according to your requirement. For more information read the section `Lambda configuration` above.
+
+```bash
+terraform apply
+```
+
+> **NOTE:** Every time you change Lambda function configuration file `services.json` you need to execute this step again.
+
+
+
+
+
+## After setup
+
+### 1a. Trigger a test Lambda invocation with the AWS CLI
 
 After the stack is created, AWS resources are not created or updated until a new SNS message is received. To test the function and create or update AWS resources with the current IP ranges for the first time, do a test invocation with the AWS CLI command below:
 
+**CloudFormation**
 ```bash
+aws lambda invoke \
+  --function-name "${FUNCTION_NAME}" \
+  --cli-binary-format 'raw-in-base64-out' \
+  --payload file://lambda/test_event.json lambda_return.json
+```
+
+**Terraform**
+```bash
+FUNCTION_NAME=$(terraform output | grep 'lambda_name' | cut -d ' ' -f 3 | tr -d '"')
 aws lambda invoke \
   --function-name "${FUNCTION_NAME}" \
   --cli-binary-format 'raw-in-base64-out' \
@@ -286,7 +351,7 @@ After successful invocation, you should receive the response below with no error
 
 The content of the `lambda_return.json` will list all AWS resources created or updated by the Lambda function with IP ranges from configured services.
 
-### 5b. Trigger a test Lambda invocation with the AWS Console
+### 1b. Trigger a test Lambda invocation with the AWS Console
 
 Alternatively, you can invoke the test event in the AWS Lambda console with sample event below. This event uses a `test-hash` md5 string that the function parses as a test event.
 
@@ -314,15 +379,16 @@ Alternatively, you can invoke the test event in the AWS Lambda console with samp
 }
 ```
 
-### 6. Reference resources
+### 2. Reference resources
 
 For WAF IPSet, see [Using an IP set in a rule group or Web ACL](https://docs.aws.amazon.com/waf/latest/developerguide/waf-ip-set-using.html).  
 For VPC Prefix List, see [Reference prefix lists in your AWS resources](https://docs.aws.amazon.com/vpc/latest/userguide/managed-prefix-lists-referencing.html).
 
-### 7. Clean-up
+### 3. Clean-up
 
-Remove the temporary files and remove CloudFormation stack.
+Remove the temporary files, remove CloudFormation stack and destroy Terraform resources.
 
+**CloudFormation**  
 ```bash
 rm update_aws_ip_ranges.zip
 rm lambda_return.json
@@ -331,8 +397,15 @@ unset AWS_REGION
 unset CFN_STACK_NAME
 ```
 
+**Terraform**  
+```bash
+rm lambda_return.json
+terraform destroy
+```
+
+
 > **ATTENTION**  
-> When you remove CloudFormation stack it will NOT remove WAF IPSet or VPC Prefix List created by this solution.  
+> When you remove CloudFormation stack, or destroy Terraform resources, it will NOT remove WAF IPSet or VPC Prefix List created by this solution.  
 > If you want to remove it, you need to do it manually.
 
 ## Lambda function customization

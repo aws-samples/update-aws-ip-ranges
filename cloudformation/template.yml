@@ -20,7 +20,7 @@ Resources:
           - id: W89
             reason: "Not required to run inside a VPC"
     Properties: 
-      Description: This Lambda function, invoked by an incoming SNS message, updates the IPv4 and IPv6 ranges with the addresses from the specified services'
+      Description: 'This Lambda function, invoked by an incoming SNS message, updates the IPv4 and IPv6 ranges with the addresses from the specified services'
       Architectures:
         - 'arm64'
       Environment: 
@@ -105,7 +105,7 @@ Resources:
                   - 'wafv2:TagResource'
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
-                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/*'
                 Condition:
                   StringLike:
                     'aws:ResourceTag/Name':
@@ -124,7 +124,7 @@ Resources:
                   - 'wafv2:UpdateIPSet'
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv4/*'
-                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/**'
+                  - !Sub 'arn:${AWS::Partition}:wafv2:${AWS::Region}:${AWS::AccountId}:*/ipset/aws-ip-ranges-*-ipv6/*'
                 Condition:
                   StringLike:
                     'aws:ResourceTag/Name':
