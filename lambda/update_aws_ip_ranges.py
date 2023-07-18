@@ -33,8 +33,7 @@ MANAGED_BY = 'update-aws-ip-ranges'
 # DEBUG
 
 # Get logging level from environment variable
-LOG_LEVEL = os.getenv('LOG_LEVEL', '').upper()
-if LOG_LEVEL not in ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG']:
+if (LOG_LEVEL := os.getenv('LOG_LEVEL', '').upper()) not in {'CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'}:
     LOG_LEVEL = 'INFO'
 
 # Set up logging. Set the level if the handler is already configured.
@@ -56,11 +55,11 @@ class IPv4List():
     """List of IPv4 Networks"""
 
     ip_list: list[str] = field(default_factory=list)
-    __summarized_ip_list: list[str] = field(default_factory=list)
+    _summarized_ip_list: list[str] = field(default_factory=list)
 
     def summarized(self) -> list[str]:
         """Summarize this list as IPv4 network and sort it"""
-        if not self.__summarized_ip_list:
+        if not self._summarized_ip_list:
             if len(self.ip_list) == 1:
                 return self.ip_list
 
@@ -69,8 +68,8 @@ class IPv4List():
                     [ipaddress.IPv4Network(addr) for addr in self.ip_list]
                 )
             )
-            self.__summarized_ip_list = [net.with_prefixlen for net in summarized_sorted]
-        return self.__summarized_ip_list
+            self._summarized_ip_list = [net.with_prefixlen for net in summarized_sorted]
+        return self._summarized_ip_list
 
     def sort(self) -> None:
         """Sort this list as IPv4 network"""
@@ -86,18 +85,18 @@ class IPv6List():
     """List of IPv6 Networks"""
 
     ip_list: list[str] = field(default_factory=list)
-    __summarized_ip_list: list[str] = field(default_factory=list)
+    _summarized_ip_list: list[str] = field(default_factory=list)
 
     def summarized(self) -> list[str]:
         """Summarize this list as IPv6 network and sort it"""
-        if not self.__summarized_ip_list:
+        if not self._summarized_ip_list:
             summarized_sorted = sorted(
                 ipaddress.collapse_addresses(
                     [ipaddress.IPv6Network(addr) for addr in self.ip_list]
                 )
             )
-            self.__summarized_ip_list = [net.exploded for net in summarized_sorted]
-        return self.__summarized_ip_list
+            self._summarized_ip_list = [net.exploded for net in summarized_sorted]
+        return self._summarized_ip_list
 
     def sort(self) -> None:
         """Sort this list as IPv6 network"""
@@ -713,11 +712,6 @@ def lambda_handler(event, context):
             config_services: dict[str, Any] = json.loads(services_file.read())
             logging.info(f'Found services: {config_services}')
 
-        # If you want different services, set the SERVICES environment variable
-        # It defaults to ROUTE53_HEALTHCHECKS, API_GATEWAY and EC2_INSTANCE_CONNECT.
-        # Using 'jq' and 'curl' get the list of possible services like this:
-        # curl -s 'https://ip-ranges.amazonaws.com/ip-ranges.json' | jq -r '.prefixes[] | .service' ip-ranges.json | sort -u
-
         message: dict[str, Any] = json.loads(event['Records'][0]['Sns']['Message'])
         logging.debug(f'Message from SNS topic: {message}')
 
@@ -848,6 +842,6 @@ def lambda_handler(event, context):
 
 
 # if __name__ == '__main__':
-#     with open('test_event.json', 'r') as event_file:
+#     with open('test_event.json', 'r', encoding='utf-8') as event_file:
 #         event: dict[str, Any] = json.loads(event_file.read())
 #         lambda_handler(event, None)
