@@ -5,11 +5,21 @@ You can configure which service and region to get range. You can also configure 
 Use cases include allowing CloudFront requests, API Gateway requests, Route53 health checker and EC2 IP range (which includes AWS Lambda and CloudWatch Synthetics).  
 The resources are created or updated in the region where the CloudFormation stack is created.
 
+
 > **NOTE ABOUT CloudFront:**  
 > There is already a managed VPC Prefix List for CloudFront.  
 > So, doesn't make sense to use this code to create Prefix List for CloudFront. Please, use the managed one.  
 > It does make sense to use this code to handle WAF IPSet for CloudFront.  
 > https://aws.amazon.com/about-aws/whats-new/2022/02/amazon-cloudfront-managed-prefix-list/
+
+
+
+> **NOTE ABOUT Route 53 health checks:**  
+> There is already a managed VPC Prefix List for Route 53 health checks.  
+> So, doesn't make sense to use this code to create Prefix List for Route 53 health checks. Please, use the managed ones.  
+> It does make sense to use this code to handle WAF IPSet for Route 53 health checks.  
+https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-router-firewall-rules.html
+
 
 
 > **NOTE**  
@@ -21,7 +31,7 @@ The resources are created or updated in the region where the CloudFormation stac
 
 The CloudFormation template `cloudformation/template.yml` creates a stack with the following resources:
 
-1. AWS Lambda function with customizable config file called `services.json`. The function's code is in `lambda/update_aws_ip_ranges.py` and is written in Python compatible with version 3.9.
+1. AWS Lambda function with customizable config file called `services.json`. The function's code is in `lambda/update_aws_ip_ranges.py` and is written in Python compatible with version 3.10.
 1. Lambda function's execution role.
 1. SNS subscription and Lambda invocation permissions for the `arn:aws:sns:us-east-1:806199016981:AmazonIpSpaceChanged` SNS topic.
 
@@ -189,7 +199,7 @@ Example:
             "Name": "ROUTE53_HEALTHCHECKS",
             "Regions": [],
             "PrefixList": {
-                "Enable": true,
+                "Enable": false,
                 "Summarize": false
             },
             "WafIPSet": {

@@ -43,8 +43,8 @@
             "Name": "ROUTE53_HEALTHCHECKS",
             "Regions": [],
             "PrefixList": {
-                "Enable": true,
-                "Summarize": true
+                "Enable": false,
+                "Summarize": false
             },
             "WafIPSet": {
                 "Enable": true,
