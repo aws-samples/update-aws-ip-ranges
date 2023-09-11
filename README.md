@@ -18,7 +18,7 @@ The resources are created or updated in the region where the CloudFormation stac
 > There is already a managed VPC Prefix List for Route 53 health checks.  
 > So, doesn't make sense to use this code to create Prefix List for Route 53 health checks. Please, use the managed ones.  
 > It does make sense to use this code to handle WAF IPSet for Route 53 health checks.  
-https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-router-firewall-rules.html
+https://aws.amazon.com/about-aws/whats-new/2023/09/amazon-route-53-managed-prefix-lists-health-checks/
 
 
 
