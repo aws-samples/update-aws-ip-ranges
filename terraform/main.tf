@@ -275,7 +275,7 @@ resource "aws_lambda_function" "update_ip_ranges" {
   description                    = "This Lambda function, invoked by an incoming SNS message, updates the IPv4 and IPv6 ranges with the addresses from the specified services"
   role                           = aws_iam_role.update_ip_ranges.arn
   handler                        = "update_aws_ip_ranges.lambda_handler"
-  runtime                        = "python3.10"
+  runtime                        = "python3.11"
   timeout                        = 300
   reserved_concurrent_executions = 2
   memory_size                    = 256
