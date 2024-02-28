@@ -529,9 +529,10 @@ def create_prefix_list(client: Any, prefix_list_name: str, prefix_list_ip_versio
     max_entries: int = len(prefix_list_entries) + 10
 
     logging.info(f'Creating VPC Prefix List "{prefix_list_name}" with max entries "{max_entries}" with address family "{prefix_list_ip_version}" with {len(address_list)} CIDRs. List: {address_list}')
+    logging.info(f'VPC Prefix List entries in this call: {prefix_list_entries[0:100]}')
     response = client.create_managed_prefix_list(
         PrefixListName=prefix_list_name,
-        Entries=prefix_list_entries,
+        Entries=prefix_list_entries[0:100],
         MaxEntries=max_entries,
         TagSpecifications=[
             {
@@ -560,6 +561,35 @@ def create_prefix_list(client: Any, prefix_list_name: str, prefix_list_ip_versio
     )
     logging.info(f'Created VPC Prefix List "{prefix_list_name}"')
     logging.debug(f'Response: {response}')
+
+    # Boto3: The number of entries per request cannot exceeds limit (100).
+    # So, if it is greater than 100, it needs to be split in multiple requests
+    for index in range(100, len(prefix_list_entries), 100):
+
+        if response['PrefixList']['State'] in {'create-in-progress', 'modify-in-progress'}:
+            logging.info('Creating VPC Prefix List is in progress. Will wait.')
+            for count in range(5):
+                seconds_to_wait: int = count + (count + 1)
+                logging.info(f'Waiting {seconds_to_wait} seconds')
+                time.sleep(seconds_to_wait)
+                wait_prefix_list: dict[str, Any] = get_prefix_list_by_id(client, response['PrefixList']['PrefixListId'])
+                if wait_prefix_list['State'] in {'create-complete', 'modify-complete'}:
+                    break
+            else:
+                # Else doesn't execute if exit via break
+                raise Exception("Error creating/updating VPC Prefix List. Can't wait anymore.")
+
+        logging.info(f'Updating VPC Prefix List "{prefix_list_name}" with max entries "{max_entries}" with address family "{prefix_list_ip_version}" with {len(address_list)} CIDRs. Starting from index "{index}".')
+        logging.info(f'VPC Prefix List entries in this call: {prefix_list_entries[index:index+100]}')
+        response = client.modify_managed_prefix_list(
+            PrefixListId=response['PrefixList']['PrefixListId'],
+            CurrentVersion=response['PrefixList']['Version'],
+            PrefixListName=response['PrefixList']['PrefixListName'],
+            AddEntries=prefix_list_entries[index:index+100]
+        )
+        logging.info(f'Updated VPC Prefix List "{prefix_list_name}"')
+        logging.debug(f'Response: {response}')
+
     logging.debug('Function return: None')
     logging.info('create_prefix_list end')
 
@@ -638,19 +668,47 @@ def update_prefix_list(client: Any, prefix_list_name: str, prefix_list: dict[str
 
         # Update Prefix List entries
         logging.info(f'Updating VPC Prefix List "{prefix_list_name}" with id "{prefix_list_id}" with version "{prefix_list_version}" with {len(address_list)} CIDRs.')
-        logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to add: {entries_to_add}')
-        logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to remove: {entries_to_remove}')
+        logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to add in this call: {entries_to_add[0:100]}')
+        logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to remove in this call: {entries_to_remove[0:100]}')
         logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Full list of entries: {address_list}')
         response = client.modify_managed_prefix_list(
             PrefixListId=prefix_list_id,
             CurrentVersion=prefix_list_version,
             PrefixListName=prefix_list_name,
-            AddEntries=entries_to_add,
-            RemoveEntries=entries_to_remove
+            AddEntries=entries_to_add[0:100],
+            RemoveEntries=entries_to_remove[0:100]
         )
         updated = True
         logging.info(f'Updated VPC Prefix List "{prefix_list_name}"')
-        logging.debug(f'Response: {response}')
+        logging.info(f'Response: {response}')
+
+        # Boto3: Request cannot contain more than 100 entry additions or removals
+        for index in range(100, max(len(entries_to_add), len(entries_to_remove)), 100):
+            if response['PrefixList']['State'] in {'modify-in-progress'}:
+                logging.info('Creating VPC Prefix List is in progress. Will wait.')
+                for count in range(5):
+                    seconds_to_wait: int = count + (count + 1)
+                    logging.info(f'Waiting {seconds_to_wait} seconds')
+                    time.sleep(seconds_to_wait)
+                    wait_prefix_list: dict[str, Any] = get_prefix_list_by_id(client, response['PrefixList']['PrefixListId'])
+                    if wait_prefix_list['State'] in {'modify-complete'}:
+                        break
+                else:
+                    # Else doesn't execute if exit via break
+                    raise Exception("Error updating VPC Prefix List. Can't wait anymore.")
+
+            logging.info(f'Updating VPC Prefix List "{prefix_list_name}" with id "{prefix_list_id}" with version "{prefix_list_version}" with {len(address_list)} CIDRs. Starting from index "{index}".')
+            logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to add in this call: {entries_to_add[index:index+100]}')
+            logging.info(f'Updating VPC Prefix List "{prefix_list_name}" Entries to remove in this call: {entries_to_remove[index:index+100]}')
+            response = client.modify_managed_prefix_list(
+                PrefixListId=response['PrefixList']['PrefixListId'],
+                CurrentVersion=response['PrefixList']['Version'],
+                PrefixListName=response['PrefixList']['PrefixListName'],
+                AddEntries=entries_to_add[0:100],
+                RemoveEntries=entries_to_remove[0:100]
+            )
+            logging.info(f'Updated VPC Prefix List "{prefix_list_name}"')
+            logging.info(f'Response: {response}')
 
         # Update VPC Prefix List tags
         logging.info(f'Updating Tags for "{prefix_list_name}" with ID "{prefix_list_id}"')
@@ -690,6 +748,24 @@ def get_prefix_list_entries(client: Any, prefix_list_name: str, prefix_list_id: 
             entries[network] = entrie['Description']
         else:
             entries[network] = ''
+
+    while 'NextToken' in response:
+        logging.info('Getting VPC Prefix List entries with NextToken')
+        response = client.get_managed_prefix_list_entries(
+            PrefixListId=prefix_list_id,
+            TargetVersion=prefix_list_version,
+            NextToken=response['NextToken']
+        )
+        logging.info(f'Got VPC Prefix List entries with NextToken "{prefix_list_name}"')
+        logging.debug(f'Response: {response}')
+
+        for entrie in response['Entries']:
+            network: Union[ipaddress.IPv4Network, ipaddress.IPv6Network] = ipaddress.ip_network(entrie['Cidr'])
+            if 'Description' in entrie:
+                entries[network] = entrie['Description']
+            else:
+                entries[network] = ''
+
     logging.debug(f'Function return: {entries}')
     logging.info('get_prefix_list_entries end')
     return entries

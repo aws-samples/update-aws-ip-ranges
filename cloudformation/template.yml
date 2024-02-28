@@ -29,7 +29,7 @@ Resources:
       Handler: 'update_aws_ip_ranges.lambda_handler'
       MemorySize: 256
       Role: !GetAtt 'LambdaUpdateIPRangesIamRole.Arn'
-      Runtime: python3.11
+      Runtime: python3.12
       Timeout: 300
       ReservedConcurrentExecutions: 2
       Code:

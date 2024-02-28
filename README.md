@@ -31,7 +31,7 @@ https://aws.amazon.com/about-aws/whats-new/2023/09/amazon-route-53-managed-prefi
 
 The CloudFormation template `cloudformation/template.yml` creates a stack with the following resources:
 
-1. AWS Lambda function with customizable config file called `services.json`. The function's code is in `lambda/update_aws_ip_ranges.py` and is written in Python compatible with version 3.10.
+1. AWS Lambda function with customizable config file called `services.json`. The function's code is in `lambda/update_aws_ip_ranges.py` and is written in Python compatible with version 3.12.
 1. Lambda function's execution role.
 1. SNS subscription and Lambda invocation permissions for the `arn:aws:sns:us-east-1:806199016981:AmazonIpSpaceChanged` SNS topic.
 
